@@ -15,7 +15,7 @@ A modernized e-commerce shopping cart application built with Node.js and Express
 
 ### 1. EKS Cluster
 
-This project deploys to the `migration-eks-cluster` provisioned by the `cloud-migration-infra` setup. Complete the [Cloud Migration Infrastructure README](https://github.com/anmutetech/cloud-migration-infra) before proceeding.
+This project deploys to the `migration-eks-cluster` provisioned by the `cloud-migration-infra` setup. Complete the [Cloud Migration Infrastructure setup](https://github.com/anmutetech/cloud-migration-infra) before proceeding.
 
 Verify your cluster is running:
 
@@ -30,42 +30,13 @@ You need a [DockerHub](https://hub.docker.com/) account to store your container 
 1. Sign up at [hub.docker.com](https://hub.docker.com/) if you don't have an account
 2. Note your DockerHub **username** and **password** — you will need these later
 
-### 3. Node.js
+### 3. AWS CLI and kubectl
 
-Skip this step if you already have Node.js installed.
-
-```bash
-# macOS
-brew install node
-
-# Linux
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-Verify the installation:
+You should already have these installed from the cloud-migration-infra setup. Verify:
 
 ```bash
-node --version
-npm --version
-```
-
-### 4. Docker
-
-Skip this step if you already have Docker installed.
-
-```bash
-# macOS
-brew install --cask docker
-
-# Linux
-curl -fsSL https://get.docker.com | sh
-```
-
-Verify the installation:
-
-```bash
-docker --version
+aws --version
+kubectl version --client
 ```
 
 ## Setup Guide
@@ -80,50 +51,7 @@ git clone https://github.com/<your-username>/legacy-app-modernization.git
 cd legacy-app-modernization
 ```
 
-### Step 2 — Run the Application Locally
-
-Test the application before deploying:
-
-```bash
-cd app
-npm install
-npm start
-```
-
-Open `http://localhost:3000` in your browser. You should see the shopping cart UI with products (Laptop, Phone, Headphones, Keyboard). Try adding items to the cart and checking out.
-
-Verify the metrics endpoint:
-
-```bash
-curl http://localhost:3000/metrics
-```
-
-You should see Prometheus-formatted metrics including `http_requests_total`. Stop the server with `Ctrl+C` when done.
-
-### Step 3 — Build and Test the Docker Image
-
-From the `legacy-app-modernization` root directory:
-
-```bash
-docker build -f docker/Dockerfile -t <your-dockerhub-username>/ecommerce-app:latest .
-```
-
-Run the container locally to verify:
-
-```bash
-docker run -p 3000:3000 <your-dockerhub-username>/ecommerce-app:latest
-```
-
-Open `http://localhost:3000` to confirm it works. Stop the container with `Ctrl+C`.
-
-### Step 4 — Push the Image to DockerHub
-
-```bash
-docker login
-docker push <your-dockerhub-username>/ecommerce-app:latest
-```
-
-### Step 5 — Update the Kubernetes Deployment
+### Step 2 — Update the Docker Image Reference
 
 Edit `kubernetes/deployment.yaml` and replace the image reference with your own DockerHub username:
 
@@ -131,9 +59,43 @@ Edit `kubernetes/deployment.yaml` and replace the image reference with your own 
 image: <your-dockerhub-username>/ecommerce-app:latest
 ```
 
-### Step 6 — Deploy to EKS Manually
+Commit and push this change:
 
-Make sure your kubectl is configured for the EKS cluster:
+```bash
+git add kubernetes/deployment.yaml
+git commit -m "Update Docker image to use my DockerHub account"
+git push origin main
+```
+
+### Step 3 — Configure GitHub Secrets
+
+In your forked repository, go to **Settings** > **Secrets and variables** > **Actions** and add:
+
+| Secret Name | Value |
+|---|---|
+| `DOCKER_USERNAME` | Your DockerHub username |
+| `DOCKER_PASSWORD` | Your DockerHub password |
+| `AWS_ACCESS_KEY_ID` | Your IAM user access key ID |
+| `AWS_SECRET_ACCESS_KEY` | Your IAM user secret access key |
+
+### Step 4 — Run the CI/CD Pipeline
+
+The pipeline triggers automatically when you push to `main`. Since you pushed in Step 2, the pipeline should already be running.
+
+1. Go to the **Actions** tab in your forked repository
+2. Click on the running workflow to monitor progress
+
+The pipeline will:
+1. Install Node.js dependencies
+2. Build the Docker image
+3. Push the image to your DockerHub account
+4. Deploy the application to your EKS cluster (namespace, deployment, service, and ServiceMonitor)
+
+> **Note:** The first run takes approximately 3–5 minutes.
+
+### Step 5 — Connect to Your EKS Cluster
+
+Make sure your local kubectl is configured for the cluster:
 
 ```bash
 aws eks update-kubeconfig \
@@ -141,16 +103,7 @@ aws eks update-kubeconfig \
   --name migration-eks-cluster
 ```
 
-Deploy the application:
-
-```bash
-kubectl apply -f kubernetes/namespace.yaml
-kubectl apply -f kubernetes/deployment.yaml
-kubectl apply -f kubernetes/service.yaml
-kubectl apply -f kubernetes/servicemonitor.yaml
-```
-
-### Step 7 — Verify the Deployment
+### Step 6 — Verify the Deployment
 
 Check the pods are running:
 
@@ -168,9 +121,11 @@ kubectl get svc -n legacy-app-ns
 
 Copy the `EXTERNAL-IP` of the LoadBalancer and open it in your browser. It may take a few minutes for the DNS to become available.
 
-### Step 8 — Verify Prometheus Monitoring
+You should see the shopping cart UI with products (Laptop, Phone, Headphones, Keyboard). Try adding items to the cart and checking out.
 
-If you have Prometheus running from the `cloud-migration-infra` setup, the ServiceMonitor will automatically start scraping metrics from the application.
+### Step 7 — Verify Prometheus Monitoring
+
+The ServiceMonitor will automatically start scraping metrics from the application if Prometheus is running from the cloud-migration-infra setup.
 
 Confirm the ServiceMonitor is created:
 
@@ -178,39 +133,14 @@ Confirm the ServiceMonitor is created:
 kubectl get servicemonitor -n legacy-app-ns
 ```
 
-You can check the metrics directly from one of the pods:
+You can check the metrics directly:
 
 ```bash
 kubectl port-forward -n legacy-app-ns svc/legacy-app-service 8080:80
 curl http://localhost:8080/metrics
 ```
 
-## Setting Up the CI/CD Pipeline (GitHub Actions)
-
-Once you've verified the manual deployment works, you can automate future deployments with the included GitHub Actions workflow.
-
-### Configure GitHub Secrets
-
-In your forked repository, go to **Settings** > **Secrets and variables** > **Actions** and add:
-
-| Secret Name | Value |
-|---|---|
-| `DOCKER_USERNAME` | Your DockerHub username |
-| `DOCKER_PASSWORD` | Your DockerHub password |
-| `AWS_ACCESS_KEY_ID` | Your IAM user access key ID |
-| `AWS_SECRET_ACCESS_KEY` | Your IAM user secret access key |
-
-### Pipeline Triggers
-
-The pipeline runs automatically on:
-- **Push** to the `main` branch
-- **Pull requests** targeting `main`
-
-It will:
-1. Install Node.js dependencies
-2. Build the Docker image
-3. Push to DockerHub
-4. Deploy to the EKS cluster using the Kubernetes manifests
+You should see Prometheus-formatted metrics including `http_requests_total`.
 
 ## API Endpoints
 
