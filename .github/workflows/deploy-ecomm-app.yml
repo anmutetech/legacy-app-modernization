@@ -1,4 +1,4 @@
-name: CI/CD Pipeline  ecommerce-app  modifiy secret
+name: CI/CD Pipeline  ecommerce-app 
 
 on:
   push:
